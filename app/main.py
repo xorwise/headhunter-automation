@@ -3,10 +3,15 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiohttp import web
 
+from bot.handlers import choices
 from config.settings import Settings
+from hh.client import HHClient
+from services.job_processor import JobProcessor
 from storage.sqlite_impl import SQLiteRepository
 from auth.oauth import OAuthManager
 from bot.commands.connect import build_router
+from bot.commands import filters as filters_cmds
+from tasks.scheduler import start_scheduler
 
 
 async def main() -> None:
@@ -22,10 +27,17 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode="HTML"),
     )
 
-    oauth = OAuthManager(settings, repo, bot)
+    hh_client = HHClient(settings)
+    processor = JobProcessor(repo, hh_client, bot)
+
+    await start_scheduler(processor, period_sec=settings.poll_interval_minutes * 60)
+
+    oauth = OAuthManager(settings, repo, bot, hh_client)
 
     dp = Dispatcher()
     dp.include_router(build_router(oauth))
+    dp.include_router(filters_cmds.setup(repo))
+    dp.include_router(choices.setup(repo))
 
     app = web.Application()
     app.add_routes([web.get("/oauth/callback", oauth.callback)])

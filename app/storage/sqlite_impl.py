@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import aiosqlite
-from typing import Optional
+from typing import AsyncGenerator, Optional, TypedDict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,6 +11,13 @@ class Token:
     access_token: str
     refresh_token: str
     expires_at: datetime
+
+
+class Filters(TypedDict, total=False):
+    resume_id: str
+    keywords: list[str]
+    min_salary: int | None
+    experience: list[str]
 
 
 class SQLiteRepository:
@@ -43,6 +50,27 @@ class SQLiteRepository:
                     )
                      """
             )
+            await db.execute(
+                """
+                    CREATE TABLE IF NOT EXISTS user_filters (
+                        telegram_user_id INTEGER PRIMARY KEY,
+                        resume_id TEXT,
+                        keywords TEXT,
+                        min_salary INTEGER,
+                        experience TEXT
+                    )
+                    """
+            )
+
+            await db.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS applied_vacancy (
+                        telegram_user_id INTEGER NOT NULL,
+                        vacancy_id TEXT NOT NULL,
+                        PRIMARY KEY (telegram_user_id, vacancy_id)
+                        )
+                    """
+                    )
 
             await db.commit()
 
@@ -106,3 +134,88 @@ class SQLiteRepository:
                 refresh_token=row["refresh_token"],
                 expires_at=expires_at,
             )
+
+    async def get_filters(self, tg_id: int) -> Filters:
+        async with aiosqlite.connect(self._db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute(
+                "SELECT * FROM user_filters WHERE telegram_user_id = ?", (tg_id,)
+            )
+            row = await cur.fetchone()
+        if not row:
+            return Filters()
+
+        return Filters(
+            resume_id=row["resume_id"],
+            keywords=_deserialize_list(row["keywords"]),
+            min_salary=row["min_salary"],
+            experience=_deserialize_list(row["experience"]),
+        )
+
+    async def set_filters(self, tg_id: int, f: Filters) -> None:
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(
+                """
+                    INSERT INTO user_filters
+                    (telegram_user_id, resume_id, keywords, min_salary, experience)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(telegram_user_id) DO UPDATE SET
+                        resume_id=excluded.resume_id,
+                        keywords=excluded.keywords,
+                        min_salary=excluded.min_salary,
+                        experience=excluded.experience
+                    """,
+                (
+                    tg_id,
+                    f.get("resume_id"),
+                    _serialize_list(f.get("keywords")),
+                    f.get("min_salary"),
+                    _serialize_list(f.get("experience")),
+                ),
+            )
+            await db.commit()
+
+    async def iter_tokens(self) -> AsyncGenerator[Token, None]:
+        async with aiosqlite.connect(self._db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM token") as cur:
+                async for row in cur:
+                    yield Token(
+                        telegram_user_id=row["telegram_user_id"],
+                        access_token=row["access_token"],
+                        refresh_token=row["refresh_token"],
+                        expires_at=datetime.fromisoformat(row["expires_at"]),
+                    )
+
+    async def is_applied(self, tg_id: int, vacancy_id: str) -> bool:
+        async with aiosqlite.connect(self._db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM applied_vacancy WHERE telegram_user_id = ? AND vacancy_id = ?",
+                (tg_id, vacancy_id),
+            ) as cur:
+                return bool(await cur.fetchone())
+
+    async def mark_applied(self, tg_id: int, vacancy_id: str) -> None:
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(
+                "INSERT OR IGNORE INTO applied_vacancy (telegram_user_id, vacancy_id) VALUES (?, ?)",
+                (tg_id, vacancy_id),
+            )
+            await db.commit()
+
+
+def _serialize_list(lst: list[str] | None) -> str | None:
+    return ",".join(lst) if lst else None
+
+
+def _deserialize_list(s: str | None) -> list[str]:
+    lst = []
+    if not s:
+        return lst
+    for x in s.split(","):
+        strip = x.strip()
+        if strip:
+            lst.append(strip)
+
+    return lst

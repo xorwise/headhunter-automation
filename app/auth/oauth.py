@@ -2,18 +2,20 @@ import asyncio
 import urllib.parse
 from aiohttp import web
 import httpx
-from aiogram import Bot
+from aiogram import Bot, types
 
 from config.settings import Settings
+from hh.client import HHClient
 from storage.sqlite_impl import SQLiteRepository
 from auth.state import generage_state
 
 
 class OAuthManager:
-    def __init__(self, settings: Settings, repo: SQLiteRepository, bot: Bot) -> None:
+    def __init__(self, settings: Settings, repo: SQLiteRepository, bot: Bot, hh_client: HHClient) -> None:
         self.settings = settings
         self.repo = repo
         self.bot = bot
+        self.hh_client = hh_client
 
     def build_authorize_url(self, tg_id: int) -> str:
         state = generage_state()
@@ -46,6 +48,7 @@ class OAuthManager:
             token_payload["refresh_token"],
             token_payload["expires_in"],
         )
+        await self._prompt_user_choices(tg_id, token_payload["access_token"])
 
         await self.bot.send_message(tg_id, "HH авторизация успешно завершена")
         return web.Response(status=200, text="Success! You can close this tab.")
@@ -67,3 +70,27 @@ class OAuthManager:
             print(r.json())
             r.raise_for_status()
             return r.json()
+
+    async def _prompt_user_choices(self, tg_id: int, access_token: str) -> None:
+        resumes = await self.hh_client.list_resumes(access_token)
+        exp_dict = await self.hh_client.get_experience(access_token)
+
+        r_kb = types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text=resume["title"], callback_data=f"resume:{resume['id']}")]
+            for resume in resumes
+        ])
+
+        e_kb = types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text=exp["name"], callback_data=f"exp:{exp['id']}")]
+            for exp in exp_dict
+        ])
+
+        await self.bot.send_message(
+            tg_id, "Выберите резюме, с которого отправлять отклики:",
+            reply_markup=r_kb,
+        )
+
+        await self.bot.send_message(
+            tg_id, "Выберите требуемый опыт:",
+            reply_markup=e_kb,
+        )

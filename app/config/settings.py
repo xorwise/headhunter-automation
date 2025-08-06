@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     oauth_redirect_uri: AnyUrl
     database_url: str = "sqlite+aiosqlite:///./data.db"
     user_agent: str = "headhunter-xorbot/1.0"
+    poll_interval_minutes: int = 10
 
     class Config:
         env_file = ".env"
