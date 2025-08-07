@@ -14,7 +14,9 @@ class Token:
 
 
 class Filters(TypedDict, total=False):
+    is_applying: bool
     resume_id: str
+    cover_letter: str
     keywords: list[str]
     min_salary: int | None
     experience: list[str]
@@ -54,7 +56,9 @@ class SQLiteRepository:
                 """
                     CREATE TABLE IF NOT EXISTS user_filters (
                         telegram_user_id INTEGER PRIMARY KEY,
+                        is_applying INTEGER DEFAULT 0,
                         resume_id TEXT,
+                        cover_letter TEXT,
                         keywords TEXT,
                         min_salary INTEGER,
                         experience TEXT
@@ -63,14 +67,14 @@ class SQLiteRepository:
             )
 
             await db.execute(
-                    """
+                """
                     CREATE TABLE IF NOT EXISTS applied_vacancy (
                         telegram_user_id INTEGER NOT NULL,
                         vacancy_id TEXT NOT NULL,
                         PRIMARY KEY (telegram_user_id, vacancy_id)
                         )
                     """
-                    )
+            )
 
             await db.commit()
 
@@ -135,7 +139,7 @@ class SQLiteRepository:
                 expires_at=expires_at,
             )
 
-    async def get_filters(self, tg_id: int) -> Filters:
+    async def get_filters(self, tg_id: int) -> Filters | None:
         async with aiosqlite.connect(self._db_path) as db:
             db.row_factory = aiosqlite.Row
             cur = await db.execute(
@@ -143,10 +147,12 @@ class SQLiteRepository:
             )
             row = await cur.fetchone()
         if not row:
-            return Filters()
+            return None
 
         return Filters(
             resume_id=row["resume_id"],
+            is_applying=bool(row["is_applying"]),
+            cover_letter=row["cover_letter"],
             keywords=_deserialize_list(row["keywords"]),
             min_salary=row["min_salary"],
             experience=_deserialize_list(row["experience"]),
@@ -157,10 +163,12 @@ class SQLiteRepository:
             await db.execute(
                 """
                     INSERT INTO user_filters
-                    (telegram_user_id, resume_id, keywords, min_salary, experience)
-                    VALUES (?, ?, ?, ?, ?)
+                    (telegram_user_id, resume_id, is_applying, cover_letter, keywords, min_salary, experience)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(telegram_user_id) DO UPDATE SET
                         resume_id=excluded.resume_id,
+                        is_applying=excluded.is_applying,
+                        cover_letter=excluded.cover_letter,
                         keywords=excluded.keywords,
                         min_salary=excluded.min_salary,
                         experience=excluded.experience
@@ -168,6 +176,8 @@ class SQLiteRepository:
                 (
                     tg_id,
                     f.get("resume_id"),
+                    int(f.get("is_applying")),
+                    f.get("cover_letter"),
                     _serialize_list(f.get("keywords")),
                     f.get("min_salary"),
                     _serialize_list(f.get("experience")),
