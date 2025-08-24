@@ -1,6 +1,8 @@
 from aiogram import Router, types
 from aiogram.filters import Command, CommandObject
 
+
+from bot.middlewares.auth import AuthMessageMiddleware
 from hh.client import HHClient
 from storage.sqlite_impl import SQLiteRepository, Filters
 
@@ -33,6 +35,9 @@ def _format_filters(f: Filters) -> str:
 
 # ---------- command handlers ------------------------------------------------
 def setup(repo: SQLiteRepository, hh_client: HHClient) -> Router:
+    router.message.middleware(AuthMessageMiddleware(repo, hh_client))
+
+
     # /filters  → показать текущие
     @router.message(Command("filters"))
     async def cmd_filters(msg: types.Message) -> None:

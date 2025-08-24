@@ -2,6 +2,7 @@ from aiogram import F, Bot, Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
+from bot.middlewares.auth import AuthCallbackMiddleware
 from hh.client import HHClient
 from storage.sqlite_impl import SQLiteRepository
 
@@ -33,6 +34,7 @@ class FrequencyState(StatesGroup):
 
 
 def setup(repo: SQLiteRepository, hh_client: HHClient, bot: Bot) -> Router:
+    router.callback_query.middleware(AuthCallbackMiddleware(repo, hh_client))
     @router.callback_query(F.data == "menu")
     async def menu(q: types.CallbackQuery, state: FSMContext) -> None:
         filters = await repo.get_filters(q.from_user.id)
