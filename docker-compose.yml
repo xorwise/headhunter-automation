@@ -1,0 +1,33 @@
+# docker-compose.yml
+version: "3.9"
+
+services:
+  app:
+    container_name: headhunter-automation
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    environment:
+      SQLITE_DB_PATH: data.db
+      PORT: "8080"
+    command: >
+      sh -lc "python main.py"
+    ports:
+      - "8080:8080"
+    env_file:
+      - ./app/.env
+    volumes:
+      - sqlite_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: >
+        python -c "import os,socket,sys; s=socket.socket(); s.settimeout(2);
+        sys.exit(0) if not s.connect_ex(('127.0.0.1', int(os.getenv('PORT','8080')))) else sys.exit(1)"
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  sqlite_data:
+    driver: local
+
