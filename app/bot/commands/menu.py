@@ -14,20 +14,18 @@ def setup(repo: SQLiteRepository, hh_client: HHClient) -> Router:
         filters = await repo.get_filters(msg.from_user.id)
         message = f"""Привет, {msg.from_user.full_name}!
 
-        Выбери одну из опций:"""
+Выбери одну из опций:"""
 
         menu_kb = types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     types.InlineKeyboardButton(
-                        text="Фильтры поиска", callback_data="filters"
-                    )
-                ],
-                [
+                        text="Фильтры поиска⚙️", callback_data="filters"
+                    ),
                     types.InlineKeyboardButton(
-                        text=f"Автоотклик {'✅' if filters['is_applying'] else ''}",
+                        text=f"Автоотклик {'✅' if filters.get('is_applying') else '❌'}",
                         callback_data="toggle_applying",
-                    )
+                    ),
                 ],
             ]
         )

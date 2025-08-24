@@ -2,16 +2,19 @@ import asyncio
 import urllib.parse
 from aiohttp import web
 import httpx
-from aiogram import Bot, types
+from aiogram import Bot
 
+from datetime import datetime, timezone, timedelta
 from config.settings import Settings
 from hh.client import HHClient
-from storage.sqlite_impl import SQLiteRepository
+from storage.sqlite_impl import SQLiteRepository, Token
 from auth.state import generage_state
 
 
 class OAuthManager:
-    def __init__(self, settings: Settings, repo: SQLiteRepository, bot: Bot, hh_client: HHClient) -> None:
+    def __init__(
+        self, settings: Settings, repo: SQLiteRepository, bot: Bot, hh_client: HHClient
+    ) -> None:
         self.settings = settings
         self.repo = repo
         self.bot = bot
@@ -48,7 +51,6 @@ class OAuthManager:
             token_payload["refresh_token"],
             token_payload["expires_in"],
         )
-        await self._prompt_user_choices(tg_id, token_payload["access_token"])
 
         await self.bot.send_message(tg_id, "HH авторизация успешно завершена")
         return web.Response(status=200, text="Success! You can close this tab.")
@@ -67,30 +69,40 @@ class OAuthManager:
             r = await client.post(
                 "https://hh.ru/oauth/token", data=data, headers=headers
             )
-            print(r.json())
             r.raise_for_status()
             return r.json()
 
-    async def _prompt_user_choices(self, tg_id: int, access_token: str) -> None:
-        resumes = await self.hh_client.list_resumes(access_token)
-        exp_dict = await self.hh_client.get_experience(access_token)
+    async def refresh_token(self, tg_id: int) -> Token | None:
+        token = await self.repo.get_token(tg_id)
+        if not token:
+            return None
+        refresh_token = token.refresh_token
 
-        r_kb = types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(text=resume["title"], callback_data=f"resume:{resume['id']}")]
-            for resume in resumes
-        ])
+        data = {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        }
 
-        e_kb = types.InlineKeyboardMarkup(inline_keyboard=[
-            [types.InlineKeyboardButton(text=exp["name"], callback_data=f"exp:{exp['id']}")]
-            for exp in exp_dict
-        ])
+        headers = {"User-Agent": "headhunter-xorbot/1.0"}
 
-        await self.bot.send_message(
-            tg_id, "Выберите резюме, с которого отправлять отклики:",
-            reply_markup=r_kb,
-        )
-
-        await self.bot.send_message(
-            tg_id, "Выберите требуемый опыт:",
-            reply_markup=e_kb,
-        )
+        async with httpx.AsyncClient() as client:
+            r = await client.post(
+                "https://hh.ru/oauth/token", data=data, headers=headers
+            )
+            r.raise_for_status()
+            token = r.json()
+            await self.repo.save_token(
+                tg_id,
+                token["access_token"],
+                token["refresh_token"],
+                token["expires_in"],
+            )
+            expires_at = datetime.now(timezone.utc) + timedelta(
+                seconds=token["expires_in"]
+            )
+            return Token(
+                telegram_user_id=tg_id,
+                access_token=token["access_token"],
+                refresh_token=token["refresh_token"],
+                expires_at=expires_at,
+            )

@@ -17,8 +17,8 @@ def _format_filters(f: Filters) -> str:
         return "Фильтры не заданы."
 
     parts: list[str] = []
-    if f.get("keywords"):
-        parts.append(f"🔑 Ключевые слова: <code>{', '.join(f['keywords'])}</code>")
+    if f.get("search_text"):
+        parts.append(f"🔑 Текст поиска: <code>{f['search_text']}</code>")
     if f.get("min_salary") or f.get("max_salary"):
         parts.append(
             f"💰 Зарплата: {f.get('min_salary') or '…'} – {f.get('max_salary') or '…'} ₽"
@@ -36,20 +36,46 @@ def setup(repo: SQLiteRepository, hh_client: HHClient) -> Router:
     # /filters  → показать текущие
     @router.message(Command("filters"))
     async def cmd_filters(msg: types.Message) -> None:
-        f = await repo.get_filters(msg.from_user.id)
-        await msg.answer(_format_filters(f))
+        filters_kb = types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(
+                        text="Сопровод-ное письмо📝", callback_data="cover_letter"
+                    ),
+                    types.InlineKeyboardButton(
+                        text="Текст поиска🔑", callback_data="search_text"
+                    ),
+                ],
+                [
+                    types.InlineKeyboardButton(
+                        text="Минимальная зарплата💰", callback_data="min_salary"
+                    ),
+                    types.InlineKeyboardButton(
+                        text="Опыт работы👔", callback_data="experience"
+                    ),
+                ],
+                [
+                    types.InlineKeyboardButton(text="Резюме📄", callback_data="resume"),
+                    types.InlineKeyboardButton(text="Меню📋", callback_data="menu"),
+                ],
+            ]
+        )
+        await msg.answer(
+            "Выбери одну из команд:", reply_markup=filters_kb, show_alert=False
+        )
 
-    # /set_keywords python, backend
-    @router.message(Command("set_keywords"))
-    async def cmd_set_keywords(msg: types.Message, command: CommandObject) -> None:
+    # /set_search_text python, backend
+    @router.message(Command("set_search_text"))
+    async def cmd_set_search_text(msg: types.Message, command: CommandObject) -> None:
         if not command.args:
-            await msg.answer("Формат: /set_keywords python, backend")
+            await msg.answer(
+                "Формат: /set_search_text python backend\nПодробнее: https://hh.ru/article/1175"
+            )
             return
-        keywords = _parse_comma_list(command.args)
         f = await repo.get_filters(msg.from_user.id)
-        f["keywords"] = keywords
+        f["search_text"] = command.args
         await repo.set_filters(msg.from_user.id, f)
-        await msg.answer("✅ Ключевые слова обновлены.")
+        await msg.answer("✅ Текст поиска обновлен.")
 
     # /set_locations Москва, Санкт-Петербург
     @router.message(Command("set_locations"))
@@ -82,7 +108,7 @@ def setup(repo: SQLiteRepository, hh_client: HHClient) -> Router:
     @router.message(Command("set_resume"))
     async def cmd_set_resume(msg: types.Message) -> None:
         access_token = await repo.get_token(msg.from_user.id)
-        resumes = await hh_client.list_resumes(access_token)
+        resumes = await hh_client.list_resumes(access_token.access_token)
 
         r_kb = types.InlineKeyboardMarkup(
             inline_keyboard=[
@@ -100,7 +126,7 @@ def setup(repo: SQLiteRepository, hh_client: HHClient) -> Router:
     @router.message(Command("set_experience"))
     async def cmd_set_experience(msg: types.Message) -> None:
         access_token = await repo.get_token(msg.from_user.id)
-        experiences = await hh_client.get_experience(access_token)
+        experiences = await hh_client.get_experience(access_token.access_token)
         e_kb = types.InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -130,12 +156,12 @@ def setup(repo: SQLiteRepository, hh_client: HHClient) -> Router:
     @router.message(Command("toggle_applying"))
     async def cmd_toggle_applying(msg: types.Message) -> None:
         f = await repo.get_filters(msg.from_user.id)
-        if not f:
-            f = Filters()
-            f["is_applying"] = True
-        elif f["is_applying"]:
+        if f["is_applying"]:
             f["is_applying"] = False
         else:
+            if not f.get("resume_id") or not f.get("search_text"):
+                await msg.answer("Выберите резюме и настройте текст для поиска!")
+                return
             f["is_applying"] = True
 
         await repo.set_filters(msg.from_user.id, f)

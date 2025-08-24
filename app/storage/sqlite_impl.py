@@ -17,9 +17,10 @@ class Filters(TypedDict, total=False):
     is_applying: bool
     resume_id: str
     cover_letter: str
-    keywords: list[str]
-    min_salary: int | None
+    search_text: str
+    min_salary: Optional[int]
     experience: list[str]
+    frequency: int
 
 
 class SQLiteRepository:
@@ -59,9 +60,10 @@ class SQLiteRepository:
                         is_applying INTEGER DEFAULT 0,
                         resume_id TEXT,
                         cover_letter TEXT,
-                        keywords TEXT,
+                        search_text TEXT,
                         min_salary INTEGER,
-                        experience TEXT
+                        experience TEXT,
+                        frequency INTEGER DEFAULT 10 CHECK (frequency > 0 AND frequency <= 100)
                     )
                     """
             )
@@ -73,6 +75,16 @@ class SQLiteRepository:
                         vacancy_id TEXT NOT NULL,
                         PRIMARY KEY (telegram_user_id, vacancy_id)
                         )
+                    """
+            )
+            await db.execute(
+                """
+                    CREATE TABLE IF NOT EXISTS user_applied_count (
+                        telegram_user_id INTEGER NOT NULL,
+                        count INTEGER NOT NULL DEFAULT 0,
+                        last_applied TEXT NOT NULL,
+                        PRIMARY KEY (telegram_user_id)
+                    )
                     """
             )
 
@@ -139,7 +151,7 @@ class SQLiteRepository:
                 expires_at=expires_at,
             )
 
-    async def get_filters(self, tg_id: int) -> Filters | None:
+    async def get_filters(self, tg_id: int) -> Filters:
         async with aiosqlite.connect(self._db_path) as db:
             db.row_factory = aiosqlite.Row
             cur = await db.execute(
@@ -147,40 +159,46 @@ class SQLiteRepository:
             )
             row = await cur.fetchone()
         if not row:
-            return None
+            return Filters()
 
         return Filters(
             resume_id=row["resume_id"],
             is_applying=bool(row["is_applying"]),
             cover_letter=row["cover_letter"],
-            keywords=_deserialize_list(row["keywords"]),
+            search_text=row["search_text"],
             min_salary=row["min_salary"],
             experience=_deserialize_list(row["experience"]),
+            frequency=row["frequency"],
         )
 
     async def set_filters(self, tg_id: int, f: Filters) -> None:
         async with aiosqlite.connect(self._db_path) as db:
+            is_applying = False
+            if f.get("is_applying"):
+                is_applying = f.get("is_applying")
             await db.execute(
                 """
                     INSERT INTO user_filters
-                    (telegram_user_id, resume_id, is_applying, cover_letter, keywords, min_salary, experience)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (telegram_user_id, resume_id, is_applying, cover_letter, search_text, min_salary, experience, frequency)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(telegram_user_id) DO UPDATE SET
                         resume_id=excluded.resume_id,
                         is_applying=excluded.is_applying,
                         cover_letter=excluded.cover_letter,
-                        keywords=excluded.keywords,
+                        search_text=excluded.search_text,
                         min_salary=excluded.min_salary,
-                        experience=excluded.experience
+                        experience=excluded.experience,
+                        frequency=excluded.frequency
                     """,
                 (
                     tg_id,
                     f.get("resume_id"),
-                    int(f.get("is_applying")),
+                    int(is_applying),
                     f.get("cover_letter"),
-                    _serialize_list(f.get("keywords")),
+                    f.get("search_text"),
                     f.get("min_salary"),
                     _serialize_list(f.get("experience")),
+                    f.get("frequency") if f.get("frequency") else 10,
                 ),
             )
             await db.commit()
@@ -213,6 +231,25 @@ class SQLiteRepository:
                 (tg_id, vacancy_id),
             )
             await db.commit()
+
+    async def update_applied_count(self, tg_id: int, count: int) -> None:
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO user_applied_count (telegram_user_id, count, last_applied) VALUES (?, ?, ?)",
+                (tg_id, count, datetime.now(timezone.utc).isoformat()),
+            )
+            await db.commit()
+
+    async def get_applied_count(self, tg_id: int) -> tuple[int, datetime]:
+        async with aiosqlite.connect(self._db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM user_applied_count WHERE telegram_user_id = ?", (tg_id,)
+            ) as cur:
+                row = await cur.fetchone()
+            if not row:
+                return 0, datetime.now(timezone.utc)
+            return (row["count"], datetime.fromisoformat(row["LAST_APPLIED"]))
 
 
 def _serialize_list(lst: list[str] | None) -> str | None:
