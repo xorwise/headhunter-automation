@@ -43,7 +43,7 @@ async def main() -> None:
     app.add_routes([web.get("/oauth/callback", oauth.callback)])
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 8080)
+    site = web.TCPSite(runner, "0.0.0.0", 8080)
     await site.start()
 
     print("Starting bot...")
