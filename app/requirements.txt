@@ -1,5 +1,4 @@
 aiogram>=3.21.0
-aiosqlite>=0.21.0
 httpx>=0.28.1
 pydantic>=2.11.7
 pydantic-settings>=2.10.1

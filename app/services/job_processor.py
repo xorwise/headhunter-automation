@@ -30,7 +30,7 @@ class JobProcessor:
 
     async def run_once(self) -> None:
         applied_cnt = 0
-        async for token in self._repo.iter_tokens():
+        for token in self._repo.iter_tokens():
             if token.expires_at <= datetime.now(timezone.utc):
                 token = await self._oauth.refresh_token(token.telegram_user_id)
 
