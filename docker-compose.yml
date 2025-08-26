@@ -1,23 +1,19 @@
-# docker-compose.yml
-version: "3.9"
-
 services:
   app:
     container_name: headhunter-automation
+    user: "${UID:-1000}:${GID:-1000}"
     build:
       context: ./app
       dockerfile: Dockerfile
     environment:
-      SQLITE_DB_PATH: data.db
       PORT: "8080"
-    command: >
-      sh -lc "python main.py"
+    command: python main.py
     ports:
       - "8080:8080"
     env_file:
       - ./app/.env
     volumes:
-      - sqlite_data:/data
+      - ./data:/app/data
     restart: unless-stopped
     healthcheck:
       test: >
@@ -26,8 +22,4 @@ services:
       interval: 30s
       timeout: 3s
       retries: 3
-
-volumes:
-  sqlite_data:
-    driver: local
 

@@ -1,39 +1,33 @@
-# Dockerfile (uv + single venv at /opt/venv)
+# Dockerfile
 FROM python:3.13-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    UV_SYSTEM_PYTHON=0 \
     PATH="/opt/venv/bin:/root/.local/bin:${PATH}" \
     APP_HOME=/app \
-    SQLITE_DB_PATH=data.db \
     PORT=8080
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       curl ca-certificates build-essential gcc \
     && rm -rf /var/lib/apt/lists/*
 
-
 WORKDIR ${APP_HOME}
 
-# Lockfile-first for caching
 COPY ./requirements.txt ./requirements.txt
-
-
 RUN pip install -r requirements.txt
 
 # Copy app code
 COPY . ${APP_HOME}
 
-# Non-root + SQLite dir
+# Create user and ensure /app is owned; DO NOT touch the DB here
 RUN adduser --disabled-password --gecos "" appuser \
- && chown -R appuser:appuser ${APP_HOME}
+ && mkdir -p /app/data \
+ && chown -R appuser:appuser /app
 
 USER appuser
 WORKDIR ${APP_HOME}
 
-# Use module name, not filename
 CMD ["python3","main.py"]
 
 HEALTHCHECK --interval=30s --timeout=3s --retries=3 \

@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import sqlite3
-from typing import AsyncGenerator, Generator, Optional, TypedDict
+import os
+from typing import Generator, Optional, TypedDict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,16 +25,14 @@ class Filters(TypedDict, total=False):
 
 
 class SQLiteRepository:
-    _db_path: Path
+    _db_path: str
 
     def __init__(self, db_url: str) -> None:
-        if str(db_url).startswith("sqlite:///"):
-            db_url = db_url.removeprefix("sqlite:///")
-        self._db_path = Path(db_url).expanduser().resolve()
+        os.makedirs(db_url, exist_ok=True)
+        self._db_path = os.path.join(db_url, "app.db")
 
     async def init(self) -> None:
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(self._db_path)
+        db = sqlite3.connect(self._db_path, timeout=30)
         db.execute(
             """
                 CREATE TABLE IF NOT EXISTS oauth_state (
@@ -101,16 +100,18 @@ class SQLiteRepository:
             (state, tg_id, created_at),
         )
         db.commit()
-        
+
     async def pop_state(self, state: str) -> Optional[int]:
         db = sqlite3.connect(self._db_path)
         db.row_factory = sqlite3.Row
-        cur = db.execute("SELECT telegram_user_id FROM oauth_state WHERE id = ?", (state,))
+        cur = db.execute(
+            "SELECT telegram_user_id FROM oauth_state WHERE id = ?", (state,)
+        )
         row = cur.fetchone()
         db.execute("DELETE FROM oauth_state WHERE id = ?", (state,))
         db.commit()
         return row["telegram_user_id"] if row else None
-            
+
     async def save_token(
         self, tg_id: int, access: str, refresh: str, expires_in: int
     ) -> None:
@@ -128,7 +129,7 @@ class SQLiteRepository:
             (tg_id, access, refresh, expires_at.isoformat()),
         )
         db.commit()
-        
+
     async def get_token(self, tg_id: int) -> Optional[Token]:
         db = sqlite3.connect(self._db_path)
         db.row_factory = sqlite3.Row
@@ -137,7 +138,7 @@ class SQLiteRepository:
         if not row:
             return None
         expires_at = datetime.fromisoformat(row["expires_at"])
-        
+
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         return Token(
@@ -146,13 +147,15 @@ class SQLiteRepository:
             refresh_token=row["refresh_token"],
             expires_at=expires_at,
         )
-        
+
     async def get_filters(self, tg_id: int) -> Filters:
         db = sqlite3.connect(self._db_path)
         db.row_factory = sqlite3.Row
-        cur = db.execute("SELECT * FROM user_filters WHERE telegram_user_id = ?", (tg_id,))
+        cur = db.execute(
+            "SELECT * FROM user_filters WHERE telegram_user_id = ?", (tg_id,)
+        )
         row = cur.fetchone()
-        
+
         if not row:
             return Filters()
 
@@ -197,7 +200,7 @@ class SQLiteRepository:
             ),
         )
         db.commit()
-        
+
     def iter_tokens(self) -> Generator[Token, None]:
         db = sqlite3.connect(self._db_path)
         db.row_factory = sqlite3.Row
@@ -209,32 +212,43 @@ class SQLiteRepository:
                 refresh_token=row["refresh_token"],
                 expires_at=datetime.fromisoformat(row["expires_at"]),
             )
-        
+
     async def is_applied(self, tg_id: int, vacancy_id: str) -> bool:
         db = sqlite3.connect(self._db_path)
         db.row_factory = sqlite3.Row
-        cur = db.execute("SELECT * FROM applied_vacancy WHERE telegram_user_id = ? AND vacancy_id = ?", (tg_id, vacancy_id))
+        cur = db.execute(
+            "SELECT * FROM applied_vacancy WHERE telegram_user_id = ? AND vacancy_id = ?",
+            (tg_id, vacancy_id),
+        )
         return bool(cur.fetchone())
-        
+
     async def mark_applied(self, tg_id: int, vacancy_id: str) -> None:
         db = sqlite3.connect(self._db_path)
-        db.execute("INSERT OR IGNORE INTO applied_vacancy (telegram_user_id, vacancy_id) VALUES (?, ?)", (tg_id, vacancy_id))
+        db.execute(
+            "INSERT OR IGNORE INTO applied_vacancy (telegram_user_id, vacancy_id) VALUES (?, ?)",
+            (tg_id, vacancy_id),
+        )
         db.commit()
-        
+
     async def update_applied_count(self, tg_id: int, count: int) -> None:
         db = sqlite3.connect(self._db_path)
-        db.execute("INSERT OR REPLACE INTO user_applied_count (telegram_user_id, count, last_applied) VALUES (?, ?, ?)", (tg_id, count, datetime.now(timezone.utc).isoformat()))
+        db.execute(
+            "INSERT OR REPLACE INTO user_applied_count (telegram_user_id, count, last_applied) VALUES (?, ?, ?)",
+            (tg_id, count, datetime.now(timezone.utc).isoformat()),
+        )
         db.commit()
-        
+
     async def get_applied_count(self, tg_id: int) -> tuple[int, datetime]:
         db = sqlite3.connect(self._db_path)
         db.row_factory = sqlite3.Row
-        cur = db.execute("SELECT * FROM user_applied_count WHERE telegram_user_id = ?", (tg_id,))
+        cur = db.execute(
+            "SELECT * FROM user_applied_count WHERE telegram_user_id = ?", (tg_id,)
+        )
         row = cur.fetchone()
         if not row:
             return 0, datetime.now(timezone.utc)
         return (row["count"], datetime.fromisoformat(row["LAST_APPLIED"]))
-        
+
 
 def _serialize_list(lst: list[str] | None) -> str | None:
     return ",".join(lst) if lst else None
